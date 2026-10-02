@@ -1,0 +1,14 @@
+# Build output (regenerate with: python build-zip.py)
+dist/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+node_modules/
