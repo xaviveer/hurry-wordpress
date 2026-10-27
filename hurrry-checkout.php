@@ -2,8 +2,8 @@
 /**
  * Plugin Name:       Hurrry Checkout
  * Plugin URI:        https://hurrry.com/
- * Description:       Replaces the WooCommerce checkout with the Hurrry hosted checkout. Builds the exact same payload as the Shopify hurry.js integration.
- * Version:           1.1.0
+ * Description:       Replaces the WooCommerce checkout with the Hurrry hosted checkout. Builds the exact same payload as the Shopify hurry.js integration and guards the WooCommerce checkout page on the server so it is never shown.
+ * Version:           1.5.0
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Hurrry
@@ -18,14 +18,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'HURRRY_VERSION', '1.1.0' );
+define( 'HURRRY_VERSION', '1.5.0' );
 define( 'HURRRY_PLUGIN_FILE', __FILE__ );
 define( 'HURRRY_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'HURRRY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'HURRRY_OPTION_KEY', 'hurrry_settings' );
 
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-settings.php';
+require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-payload.php';
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-cart-rest.php';
+require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-gate.php';
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-frontend.php';
 
 /**
@@ -58,9 +60,18 @@ add_action(
 
 		Hurrry_Settings::instance();
 		Hurrry_Cart_Rest::instance();
+		Hurrry_Gate::instance();
 		Hurrry_Frontend::instance();
 	}
 );
+
+/**
+ * Cached pages built before the plugin existed carry no script, and pages
+ * built while it was active carry a script that no longer exists once it is
+ * gone: both ends of the plugin's life flush the page caches.
+ */
+register_activation_hook( __FILE__, array( 'Hurrry_Settings', 'purge_caches' ) );
+register_deactivation_hook( __FILE__, array( 'Hurrry_Settings', 'purge_caches' ) );
 
 /**
  * Settings link on the plugins list.

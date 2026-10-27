@@ -103,9 +103,7 @@ class Hurrry_Cart_Rest {
 		} else {
 			nocache_headers();
 		}
-		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
-			define( 'DONOTCACHEPAGE', true );
-		}
+		$this->forbid_page_caches();
 
 		$this->boot_cart();
 
@@ -183,12 +181,36 @@ class Hurrry_Cart_Rest {
 	 * @return WP_REST_Response
 	 */
 	public function get_cart() {
+		// LiteSpeed Cache caches REST responses by default ("Cache REST API"
+		// is on out of the box) and ignores Cache-Control from PHP: seen in
+		// production serving one shopper's cart to every other visitor. It
+		// does honour its own header, the constant and its action.
+		$this->forbid_page_caches();
+
 		$this->boot_cart();
 
 		$rest = new WP_REST_Response( $this->build_cart_payload( 'rest' ), 200 );
-		$rest->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
+		$rest->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0, private' );
+		$rest->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
+		$rest->header( 'Vary', 'Cookie' );
 
 		return $rest;
+	}
+
+	/**
+	 * Every signal the page caches listen to: a cart response is private to
+	 * one browser and must never be stored.
+	 */
+	private function forbid_page_caches() {
+		foreach ( array( 'DONOTCACHEPAGE', 'DONOTCACHEOBJECT', 'DONOTCACHEDB', 'DONOTCDN' ) as $c ) {
+			if ( ! defined( $c ) ) {
+				define( $c, true );
+			}
+		}
+		if ( ! headers_sent() ) {
+			header( 'X-LiteSpeed-Cache-Control: no-cache' );
+		}
+		do_action( 'litespeed_control_set_nocache', 'hurrry cart response' );
 	}
 
 	/**
