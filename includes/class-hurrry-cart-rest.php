@@ -29,6 +29,7 @@ class Hurrry_Cart_Rest {
 	const NAMESPACE_V1 = 'hurrry/v1';
 	const ROUTE_CART   = '/cart';
 	const AJAX_ACTION  = 'hurrry_get_cart';
+	const SEED_KEY     = 'hurrry_cart_seed';
 
 	private static $instance = null;
 
@@ -48,6 +49,24 @@ class Hurrry_Cart_Rest {
 		// admin-ajax.php fallback, for setups where ?wc-ajax= is blocked.
 		add_action( 'wp_ajax_' . self::AJAX_ACTION, array( $this, 'ajax_get_cart' ) );
 		add_action( 'wp_ajax_nopriv_' . self::AJAX_ACTION, array( $this, 'ajax_get_cart' ) );
+
+		// A cart that was emptied is over: whatever is added next is a new cart.
+		add_action( 'woocommerce_cart_emptied', array( $this, 'rotate_cart_seed' ) );
+	}
+
+	/**
+	 * Starts a new cart identity once the cart has been emptied, so that the
+	 * same shopper buying the same products again gets a different token.
+	 */
+	public function rotate_cart_seed() {
+		try {
+			if ( function_exists( 'WC' ) && null !== WC()->session && method_exists( WC()->session, 'set' ) ) {
+				WC()->session->set( self::SEED_KEY, substr( md5( uniqid( '', true ) . wp_rand() ), 0, 12 ) );
+			}
+		} catch ( \Throwable $e ) {
+			// The token simply keeps its previous seed.
+			unset( $e );
+		}
 	}
 
 	/**
@@ -376,17 +395,39 @@ class Hurrry_Cart_Rest {
 	}
 
 	/**
-	 * Session identifier used as the stable cart token. It survives reloads and
-	 * is per browser, which is exactly what cartExternalId() needs to avoid
-	 * creating a new order on every preload.
+	 * Stable cart token: the same for every read of the same unchanged cart
+	 * (which is what cartExternalId() needs to avoid creating a new order on
+	 * every preload), different once the cart changes or has been emptied.
 	 *
-	 * @return string
+	 * The session customer id alone is constant for a logged-in shopper, so
+	 * every cart they ever built shared one token. The token now also covers
+	 * the cart lines (line key and quantity) and a seed renewed each time the
+	 * cart is emptied. WC_Cart::get_cart_hash() is deliberately not used: it
+	 * includes the cart total, which shipping changes between the cart page
+	 * and the checkout guard, and both must compute the same token.
+	 *
+	 * @return string 32 hex chars, or '' when there is no session.
 	 */
 	private function cart_token() {
 		if ( function_exists( 'WC' ) && null !== WC()->session && method_exists( WC()->session, 'get_customer_id' ) ) {
 			$token = (string) WC()->session->get_customer_id();
 			if ( '' !== $token ) {
-				return substr( md5( $token ), 0, 32 );
+				$seed  = '';
+				$lines = array();
+				try {
+					$stored = WC()->session->get( self::SEED_KEY, '' );
+					$seed   = is_string( $stored ) ? $stored : '';
+					if ( WC()->cart instanceof WC_Cart ) {
+						foreach ( WC()->cart->get_cart() as $cart_item_key => $cart_item ) {
+							$lines[] = $cart_item_key . ':' . ( isset( $cart_item['quantity'] ) ? (int) $cart_item['quantity'] : 0 );
+						}
+					}
+				} catch ( \Throwable $e ) {
+					// Fall back to the session id alone, as before.
+					$seed  = '';
+					$lines = array();
+				}
+				return substr( md5( $token . '|' . $seed . '|' . implode( ',', $lines ) ), 0, 32 );
 			}
 		}
 		return '';
