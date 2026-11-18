@@ -406,7 +406,7 @@ class Hurrry_Settings {
 						<th scope="row"><label for="hurrry-ads"><?php esc_html_e( 'Google Ads ID', 'hurrry-checkout' ); ?></label></th>
 						<td>
 							<input type="text" id="hurrry-ads" class="regular-text" name="<?php echo esc_attr( $key ); ?>[google_ads_id]" value="<?php echo esc_attr( $s['google_ads_id'] ); ?>" placeholder="AW-123456789" />
-							<p class="description"><?php esc_html_e( 'Enables the cross-domain linker towards the checkout host.', 'hurrry-checkout' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Optional. Only links the Google tag of this site with the checkout. It does not send conversions: those are sent by the Hurrry checkout, once a Google Ads pixel (AW- id plus the two conversion labels) is connected to the store in Hurrry. The click id of the ad travels to the checkout either way.', 'hurrry-checkout' ); ?></p>
 						</td>
 					</tr>
 					<tr>
@@ -417,7 +417,7 @@ class Hurrry_Settings {
 								<input type="checkbox" name="<?php echo esc_attr( $key ); ?>[track_initiate_checkout]" value="yes" <?php checked( $s['track_initiate_checkout'], 'yes' ); ?> />
 								<?php esc_html_e( 'Fire InitiateCheckout when the shopper is sent to Hurrry', 'hurrry-checkout' ); ?>
 							</label>
-							<p class="description"><?php esc_html_e( 'Optional. If the theme already loads the pixel, leave the ID empty: click ids and the visitor id are matched into the existing pixel anyway.', 'hurrry-checkout' ); ?></p>
+							<p class="description"><?php esc_html_e( 'Optional. If the theme already loads the pixel, leave the ID empty: click ids and the visitor id are matched into the existing pixel anyway. This ID does not send purchases: Purchase is sent by Hurrry (browser and Conversions API) once a Meta pixel with its access token is connected to the store in Hurrry.', 'hurrry-checkout' ); ?></p>
 						</td>
 					</tr>
 					<tr>

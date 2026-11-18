@@ -4,7 +4,7 @@ Tags: woocommerce, checkout, conversion
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.5.0
+Stable tag: 1.5.3
 License: GPLv2 or later
 
 Replaces the WooCommerce checkout with the Hurrry hosted checkout, using the same payload as the Shopify integration, and guards the WooCommerce checkout on the server so it is never shown.
@@ -84,6 +84,19 @@ In the browser console: `Hurrry.status()`, `Hurrry.signals()`, `Hurrry.go()`, `H
 Mark any element with `data-hurrry-checkout` to have it treated as a checkout button, or `data-hurrry-ignore` to leave it alone.
 
 == Changelog ==
+
+= 1.5.3 =
+* TikTok: the click id (ttclid) is now kept in a first-party cookie of its own, so the server-side guard forwards it on stores that do not load TikTok's pixel.
+* TikTok: last click wins. A stored ttclid is dropped when a later click from another platform arrives (Meta, Google, Pinterest) and after 90 days, instead of claiming every future order.
+* TikTok: when the store loads TikTok's pixel, the script identifies the visitor to it (same id the server events carry) and, with the InitiateCheckout option on, fires InitiateCheckout with the event id of the server event, so the two are counted once.
+
+= 1.5.2 =
+* Iframe mode: the checkout now fits the visible screen on phones. It was sized with 100vh, taller than the visible area when the browser bars show, so the end of the checkout (the pay button) could not be reached by scrolling.
+
+= 1.5.1 =
+* Google Ads: gclid, gbraid and wbraid are kept apart and handed to the checkout as `hy_gclid`, `hy_gbraid` and `hy_wbraid`, so the checkout's Google tag can attribute the conversion to the ad click. A gbraid or wbraid is no longer passed off as a gclid.
+* The Google click ids are also kept in first-party cookies, so the server-side guard forwards them on stores that have no Google tag of their own.
+* Settings: the Google Ads ID and Meta Pixel ID fields now say what they do not do (conversions and purchases are sent by Hurrry once the pixel is connected to the store there).
 
 = 1.5.0 =
 * Server-side guard on the checkout URL: the WooCommerce checkout is never rendered. Redirects to the preloaded URL (cookie), or creates the order from PHP, or serves an ES5 interstitial, or an error page with retry.

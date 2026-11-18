@@ -27,7 +27,7 @@
 (function (window, document) {
   "use strict";
 
-  var SCRIPT_VERSION = "1.5.0";
+  var SCRIPT_VERSION = "1.5.2";
   var Hurrry = {};
 
   // ============================
@@ -427,6 +427,16 @@
         warn("cookie write failed", name, e);
       }
     }
+    function dropCookie(name) {
+      try {
+        var gone = name + "=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax";
+        var dom = rootDomain();
+        if (dom) document.cookie = gone + "; domain=" + dom;
+        document.cookie = gone;
+      } catch (e) {
+        warn("cookie drop failed", name, e);
+      }
+    }
     function load() {
       var out = {};
       [sessionStorage, localStorage].forEach(function (store) {
@@ -559,23 +569,62 @@
         fbp = kept ? kept.value : mintFbp();
         sources.fbp = kept ? kept.source : "minted";
       }
+      // TikTok click id. Last click wins: a newer click from another platform
+      // (fbclid, gclid / gbraid / wbraid or epik in the URL) retires the ttclid
+      // we were keeping, and so does age. The retired value is remembered
+      // (ttcOff) because TikTok's own pixel keeps a "ttclid" cookie and would
+      // hand the dead click straight back. A new ttclid in the URL clears it.
+      var ttcDays = CFG.signalDays || DEFAULT_CFG.signalDays;
+      var freshTtc = url.ttclid || hash.ttclid || null;
+      var ttcOff = freshTtc ? null : readCookie("hy_ttc_off") || stored.ttcOff || null;
+      var liveTtc = function (value) {
+        var v = value ? String(value).trim() : "";
+        return v && v !== ttcOff ? v : null;
+      };
       var ttc = firstOf([
-        ["url", url.ttclid || hash.ttclid],
-        ["cookie", readCookie("ttclid")],
-        ["handoff", url.hy_ttc],
-        ["store", stored.ttc],
+        ["url", freshTtc],
+        ["own", liveTtc(readCookie("hy_ttc"))],
+        ["cookie", liveTtc(readCookie("ttclid"))],
+        ["handoff", liveTtc(url.hy_ttc)],
+        ["store", liveTtc(stored.ttc)],
       ]);
+      var ttcAt = null;
+      if (ttc) {
+        ttcAt = (stored.ttc === ttc.value && stored.ttcAt) || Date.now();
+        var rival = !freshTtc && (fresh || url.gclid || url.gbraid || url.wbraid || url.epik);
+        if (rival || Date.now() - ttcAt > ttcDays * 864e5) {
+          ttcOff = ttc.value;
+          ttc = null;
+          ttcAt = null;
+        }
+      }
       var ttp = firstOf([
         ["cookie", readCookie("_ttp")],
         ["handoff", url.hy_ttp],
         ["store", stored.ttp],
       ]);
+      // Google has three click ids (gclid, and gbraid / wbraid for iOS traffic). They
+      // are kept apart: the checkout hands each one to gtag under its own name, and
+      // a gbraid passed off as a gclid is a click Google cannot read.
       var gclAw = readCookie("_gcl_aw");
       var gclid = firstOf([
-        ["url", url.gclid || url.gbraid || url.wbraid],
+        ["url", url.gclid],
         ["cookie", gclAw && gclAw.indexOf(".") > 0 ? gclAw.split(".").slice(2).join(".") : gclAw],
         ["handoff", url.hy_gclid],
+        ["own", readCookie("hy_gclid")],
         ["store", stored.gclid],
+      ]);
+      var gbraid = firstOf([
+        ["url", url.gbraid],
+        ["handoff", url.hy_gbraid],
+        ["own", readCookie("hy_gbraid")],
+        ["store", stored.gbraid],
+      ]);
+      var wbraid = firstOf([
+        ["url", url.wbraid],
+        ["handoff", url.hy_wbraid],
+        ["own", readCookie("hy_wbraid")],
+        ["store", stored.wbraid],
       ]);
       var epik = firstOf([
         ["cookie", readCookie("_epik")],
@@ -595,8 +644,12 @@
         fbclid: fbclid ? fbclid.value : null,
         fbclidAt: fbclidAt,
         ttc: ttc ? ttc.value : null,
+        ttcAt: ttcAt,
+        ttcOff: ttcOff,
         ttp: ttp ? ttp.value : null,
         gclid: gclid ? gclid.value : null,
+        gbraid: gbraid ? gbraid.value : null,
+        wbraid: wbraid ? wbraid.value : null,
         epik: epik ? epik.value : null,
         vid: vid ? vid.value : mintVid(),
         em: stored.em || null,
@@ -618,14 +671,36 @@
         ownFbp = state.fbp;
       }
       if (state.vid) writeCookie("hy_vid", state.vid, Math.max(days, 365));
+      // First-party copies of the Google click ids: storage is per origin and
+      // invisible to the server, a cookie is neither.
+      ["gclid", "gbraid", "wbraid"].forEach(function (k) {
+        if (state[k] && readCookie("hy_" + k) !== state[k]) writeCookie("hy_" + k, state[k], days);
+      });
+      // Same for the TikTok click id: TikTok's pixel is not always on the page
+      // to write its "ttclid" cookie, and without a cookie neither the server
+      // nor a later visit can see the click.
+      if (state.ttc) {
+        if (readCookie("hy_ttc") !== state.ttc) writeCookie("hy_ttc", state.ttc, days);
+      } else if (readCookie("hy_ttc")) {
+        dropCookie("hy_ttc");
+      }
+      if (state.ttcOff) {
+        if (readCookie("hy_ttc_off") !== state.ttcOff) writeCookie("hy_ttc_off", state.ttcOff, days);
+      } else if (readCookie("hy_ttc_off")) {
+        dropCookie("hy_ttc_off");
+      }
       save({
         fbc: state.fbc,
         fbp: state.fbp,
         fbclid: state.fbclid,
         fbclidAt: state.fbclidAt,
         ttc: state.ttc,
+        ttcAt: state.ttcAt,
+        ttcOff: state.ttcOff,
         ttp: state.ttp,
         gclid: state.gclid,
+        gbraid: state.gbraid,
+        wbraid: state.wbraid,
         epik: state.epik,
         vid: state.vid,
         em: state.em,
@@ -658,15 +733,18 @@
     function payload() {
       var s = current();
       var out = {};
-      ["fbc", "fbp", "ttc", "ttp", "gclid", "epik"].forEach(function (k) {
+      ["fbc", "fbp", "ttc", "ttp", "epik"].forEach(function (k) {
         if (s[k]) out[k] = s[k];
       });
+      // The order has one Google click id field; it says "this shopper came from
+      // Google Ads", whichever of the three ids the click carried.
+      if (s.gclid || s.wbraid || s.gbraid) out.gclid = s.gclid || s.wbraid || s.gbraid;
       if (s.vid) out.visitorId = s.vid;
       return out;
     }
     function fingerprint() {
       var s = current();
-      return [s.fbc, s.fbp, s.ttc, s.ttp, s.gclid, s.epik, s.vid].join("|");
+      return [s.fbc, s.fbp, s.ttc, s.ttp, s.gclid, s.gbraid, s.wbraid, s.epik, s.vid].join("|");
     }
     function decorate(url) {
       var s = current();
@@ -677,6 +755,8 @@
         hy_ttc: s.ttc,
         hy_ttp: s.ttp,
         hy_gclid: s.gclid,
+        hy_gbraid: s.gbraid,
+        hy_wbraid: s.wbraid,
         hy_epik: s.epik,
         hy_vid: s.vid,
       };
@@ -741,6 +821,7 @@
       }
       persist();
       applyMatching();
+      identifyTiktok();
       log("PII captured for Advanced Matching", { em: !!s.em, ph: !!s.ph });
       return true;
     }
@@ -810,10 +891,55 @@
         return false;
       }
     }
+    // TikTok's browser pixel, when the shop has one on the page (window.ttq).
+    // identify() gives it the same visitor id the server event carries as
+    // external_id, plus the email / phone once known; the pixel hashes them.
+    function identifyTiktok() {
+      try {
+        var ttq = window.ttq;
+        if (!ttq || typeof ttq.identify !== "function") return false;
+        var s = current();
+        var who = {};
+        if (s.vid) who.external_id = s.vid;
+        if (s.em) who.email = s.em;
+        if (s.ph && s.ph.charAt(0) === "+") who.phone_number = s.ph;
+        if (!Object.keys(who).length) return false;
+        ttq.identify(who);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    var tiktokMatchStarted = false;
+    function matchTiktokPixel() {
+      if (tiktokMatchStarted) return;
+      tiktokMatchStarted = true;
+      var tries = 0;
+      (function attempt() {
+        if (identifyTiktok()) return;
+        if (++tries < 20) setTimeout(attempt, 500);
+      })();
+    }
+    // Same event_id as the server-side event, so TikTok counts the two as one.
+    function trackTiktok(name, params, eventId) {
+      try {
+        var ttq = window.ttq;
+        if (!ttq || typeof ttq.track !== "function") return false;
+        identifyTiktok();
+        var data = Object.assign({}, params || {});
+        ttq.track(name, data, eventId ? { event_id: eventId } : undefined);
+        log("ttq track", name, eventId || "(no id)", data);
+        return true;
+      } catch (e) {
+        warn("ttq track failed", name, e);
+        return false;
+      }
+    }
     function boot() {
       harvest();
       if (CFG.metaPixelId) bootstrapPixel();
       matchThemePixels();
+      matchTiktokPixel();
       return state;
     }
     return {
@@ -826,6 +952,7 @@
       decorate: decorate,
       watchPii: watchPii,
       track: track,
+      trackTiktok: trackTiktok,
       rememberPii: rememberPii,
     };
   })();
@@ -1417,8 +1544,25 @@
         iframe.style.position = "fixed";
         iframe.style.top = "0";
         iframe.style.left = "0";
-        iframe.style.width = "100vw";
-        iframe.style.height = "100vh";
+        iframe.style.width = "100%";
+        // Not 100vh: on phones that is the screen with the browser bars hidden,
+        // so the iframe was taller than what is visible and the end of the
+        // checkout (the pay button) stayed below the screen, out of reach,
+        // because the page behind cannot scroll. 100dvh is the visible height;
+        // older browsers get it measured in pixels and kept up to date.
+        var dvh = false;
+        try { dvh = !!(window.CSS && CSS.supports && CSS.supports("height", "100dvh")); } catch (eDvh) {}
+        if (dvh) {
+          iframe.style.height = "100dvh";
+        } else {
+          var fitIframe = function () {
+            var h = window.innerHeight || document.documentElement.clientHeight;
+            iframe.style.height = h ? h + "px" : "100%";
+          };
+          fitIframe();
+          window.addEventListener("resize", fitIframe);
+          window.addEventListener("orientationchange", function () { setTimeout(fitIframe, 300); });
+        }
         iframe.style.border = "none";
         iframe.style.margin = "0";
         iframe.style.padding = "0";
@@ -2042,7 +2186,19 @@
       },
       orderId + "_initiate_checkout",
     );
-    beaconPending = fired;
+    var tiktokFired = SIG.trackTiktok(
+      "InitiateCheckout",
+      {
+        value: c.value,
+        currency: c.currency,
+        content_type: "product",
+        contents: (c.contents || []).map(function (i) {
+          return { content_id: String(i.id), quantity: i.quantity, price: i.item_price };
+        }),
+      },
+      orderId + "_initiate_checkout",
+    );
+    beaconPending = fired || tiktokFired;
   }
 
   // ============================

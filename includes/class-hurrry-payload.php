@@ -169,7 +169,19 @@ class Hurrry_Payload {
 			$out['fbp'] = $query['hy_fbp'];
 		}
 
-		$ttc = self::first( array( isset( $query['ttclid'] ) ? $query['ttclid'] : '', self::cookie( 'ttclid' ), isset( $query['hy_ttc'] ) ? $query['hy_ttc'] : '' ) );
+		// TikTok click id: the URL first, then the script's own copy (hy_ttc),
+		// then the cookie of TikTok's pixel. The script retires a ttclid once a
+		// later click from another platform arrives and leaves it in hy_ttc_off,
+		// because TikTok's own cookie would still hand the dead click back.
+		$ttc_fresh = isset( $query['ttclid'] ) ? trim( (string) $query['ttclid'] ) : '';
+		$ttc_off   = '' !== $ttc_fresh ? '' : trim( (string) self::cookie( 'hy_ttc_off' ) );
+		$ttc_kept  = array( self::cookie( 'hy_ttc' ), self::cookie( 'ttclid' ), isset( $query['hy_ttc'] ) ? $query['hy_ttc'] : '' );
+		foreach ( $ttc_kept as $i => $candidate ) {
+			if ( '' !== $ttc_off && trim( (string) $candidate ) === $ttc_off ) {
+				$ttc_kept[ $i ] = '';
+			}
+		}
+		$ttc = self::first( array_merge( array( $ttc_fresh ), $ttc_kept ) );
 		if ( $ttc ) {
 			$out['ttc'] = $ttc;
 		}
@@ -178,20 +190,10 @@ class Hurrry_Payload {
 			$out['ttp'] = $ttp;
 		}
 
-		$gcl_aw = self::cookie( '_gcl_aw' );
-		if ( '' !== $gcl_aw && strpos( $gcl_aw, '.' ) > 0 ) {
-			$gcl_parts = explode( '.', $gcl_aw );
-			$gcl_aw    = implode( '.', array_slice( $gcl_parts, 2 ) );
-		}
-		$gclid = self::first(
-			array(
-				isset( $query['gclid'] ) ? $query['gclid'] : '',
-				isset( $query['gbraid'] ) ? $query['gbraid'] : '',
-				isset( $query['wbraid'] ) ? $query['wbraid'] : '',
-				$gcl_aw,
-				isset( $query['hy_gclid'] ) ? $query['hy_gclid'] : '',
-			)
-		);
+		// One Google field on the order: "this shopper came from Google Ads",
+		// whichever of the three click ids the click carried (same as the script).
+		$google = self::google_click_ids();
+		$gclid  = self::first( array( $google['gclid'], $google['wbraid'], $google['gbraid'] ) );
 		if ( $gclid ) {
 			$out['gclid'] = $gclid;
 		}
@@ -206,6 +208,48 @@ class Hurrry_Payload {
 			$out['visitorId'] = $vid;
 		}
 
+		return $out;
+	}
+
+	/**
+	 * The three Google Ads click ids, kept apart like SIG does in the browser:
+	 * the checkout hands each one to gtag under its own name, and a gbraid
+	 * passed off as a gclid is a click Google cannot read.
+	 *
+	 * Sources, in order: the current URL, Google's own cookie (gclid only), the
+	 * hy_* handoff parameter, and the first-party hy_* cookie the script writes
+	 * (what makes the click id reach PHP on stores without a Google tag).
+	 *
+	 * @return array Keys gclid, gbraid, wbraid; '' when unknown.
+	 */
+	public static function google_click_ids() {
+		$query = self::query();
+
+		$gcl_aw = self::cookie( '_gcl_aw' );
+		if ( '' !== $gcl_aw && strpos( $gcl_aw, '.' ) > 0 ) {
+			$gcl_parts = explode( '.', $gcl_aw );
+			$gcl_aw    = implode( '.', array_slice( $gcl_parts, 2 ) );
+		}
+
+		$out = array(
+			'gclid' => self::first(
+				array(
+					isset( $query['gclid'] ) ? $query['gclid'] : '',
+					$gcl_aw,
+					isset( $query['hy_gclid'] ) ? $query['hy_gclid'] : '',
+					self::cookie( 'hy_gclid' ),
+				)
+			),
+		);
+		foreach ( array( 'gbraid', 'wbraid' ) as $key ) {
+			$out[ $key ] = self::first(
+				array(
+					isset( $query[ $key ] ) ? $query[ $key ] : '',
+					isset( $query[ 'hy_' . $key ] ) ? $query[ 'hy_' . $key ] : '',
+					self::cookie( 'hy_' . $key ),
+				)
+			);
+		}
 		return $out;
 	}
 
@@ -233,13 +277,19 @@ class Hurrry_Payload {
 			'fbp'       => 'hy_fbp',
 			'ttc'       => 'hy_ttc',
 			'ttp'       => 'hy_ttp',
-			'gclid'     => 'hy_gclid',
 			'epik'      => 'hy_epik',
 			'visitorId' => 'hy_vid',
 		);
 		foreach ( $map as $from => $to ) {
 			if ( ! empty( $signals[ $from ] ) ) {
 				$args[ $to ] = $signals[ $from ];
+			}
+		}
+
+		// Each Google click id under its own name (see google_click_ids()).
+		foreach ( self::google_click_ids() as $key => $value ) {
+			if ( '' !== $value ) {
+				$args[ 'hy_' . $key ] = $value;
 			}
 		}
 

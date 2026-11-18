@@ -3,7 +3,7 @@
  * Plugin Name:       Hurrry Checkout
  * Plugin URI:        https://hurrry.com/
  * Description:       Replaces the WooCommerce checkout with the Hurrry hosted checkout. Builds the exact same payload as the Shopify hurry.js integration and guards the WooCommerce checkout page on the server so it is never shown.
- * Version:           1.5.0
+ * Version:           1.5.3
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Hurrry
@@ -18,7 +18,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'HURRRY_VERSION', '1.5.0' );
+define( 'HURRRY_VERSION', '1.5.3' );
 define( 'HURRRY_PLUGIN_FILE', __FILE__ );
 define( 'HURRRY_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'HURRRY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
