@@ -110,6 +110,11 @@ class Hurrry_Payload {
 
 		$payload = array_merge( $payload, self::signals() );
 
+		$attribution = self::attribution();
+		if ( $attribution ) {
+			$payload['attribution'] = $attribution;
+		}
+
 		return apply_filters( 'hurrry_order_payload', $payload, $cart, $endpoint );
 	}
 
@@ -209,6 +214,98 @@ class Hurrry_Payload {
 		}
 
 		return $out;
+	}
+
+	/**
+	 * Ad attribution the way SIG.attribution() reports it in the browser: the
+	 * UTMs and hp_* ids of the last tagged landing, kept 7 days by the script
+	 * in the first-party cookie hy_attr. Tags on the current URL win (a
+	 * shopper who lands straight on a guarded URL has no cookie yet).
+	 *
+	 * @return array Empty when nothing is known. Keys among utmSource,
+	 *               utmMedium, utmCampaign, utmTerm, utmContent, hpCid,
+	 *               hpAsid, hpAid, hpPl, landingUrl, referrer, inferred, clickAt.
+	 */
+	public static function attribution() {
+		$map = array(
+			'utm_source'   => 'utmSource',
+			'utm_medium'   => 'utmMedium',
+			'utm_campaign' => 'utmCampaign',
+			'utm_term'     => 'utmTerm',
+			'utm_content'  => 'utmContent',
+			'hp_cid'       => 'hpCid',
+			'hp_asid'      => 'hpAsid',
+			'hp_aid'       => 'hpAid',
+			'hp_pl'        => 'hpPl',
+		);
+
+		$out   = array();
+		$query = self::query();
+		foreach ( $map as $from => $to ) {
+			if ( isset( $query[ $from ] ) ) {
+				$value = self::clip( $query[ $from ], 0 === strpos( $from, 'hp_' ) ? 64 : 150 );
+				if ( '' !== $value ) {
+					$out[ $to ] = $value;
+				}
+			}
+		}
+		if ( $out ) {
+			$out['clickAt'] = (int) round( microtime( true ) * 1000 );
+			return $out;
+		}
+
+		if ( ! isset( $_COOKIE['hy_attr'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return array();
+		}
+		$raw = wp_unslash( $_COOKIE['hy_attr'] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput
+		if ( ! is_string( $raw ) || '' === $raw || strlen( $raw ) > 4096 ) {
+			return array();
+		}
+		$data = json_decode( $raw, true );
+		if ( ! is_array( $data ) ) {
+			return array();
+		}
+		$at = isset( $data['at'] ) && is_numeric( $data['at'] ) ? (float) $data['at'] : 0;
+		$now = microtime( true ) * 1000;
+		// Same 7 days as the script; the cookie should be gone by then anyway.
+		if ( $at <= 0 || $now - $at > 7 * DAY_IN_SECONDS * 1000 ) {
+			return array();
+		}
+		foreach ( $map as $from => $to ) {
+			if ( isset( $data[ $from ] ) && is_scalar( $data[ $from ] ) ) {
+				$value = self::clip( (string) $data[ $from ], 0 === strpos( $from, 'hp_' ) ? 64 : 150 );
+				if ( '' !== $value ) {
+					$out[ $to ] = $value;
+				}
+			}
+		}
+		if ( ! $out ) {
+			return array();
+		}
+		if ( isset( $data['lp'] ) && is_string( $data['lp'] ) && '' !== self::clip( $data['lp'], 300 ) ) {
+			$out['landingUrl'] = self::clip( $data['lp'], 300 );
+		}
+		if ( isset( $data['rf'] ) && is_string( $data['rf'] ) && '' !== self::clip( $data['rf'], 300 ) ) {
+			$out['referrer'] = self::clip( $data['rf'], 300 );
+		}
+		if ( ! empty( $data['auto'] ) ) {
+			$out['inferred'] = true;
+		}
+		$out['clickAt'] = (int) round( $at );
+		return $out;
+	}
+
+	/**
+	 * @param string $value Raw value.
+	 * @param int    $max   Maximum length.
+	 * @return string Without control characters, trimmed and capped.
+	 */
+	private static function clip( $value, $max ) {
+		$value = trim( preg_replace( '/[\x00-\x1f\x7f]/', ' ', (string) $value ) );
+		if ( function_exists( 'mb_substr' ) ) {
+			return mb_substr( $value, 0, $max );
+		}
+		return substr( $value, 0, $max );
 	}
 
 	/**

@@ -27,7 +27,7 @@
 (function (window, document) {
   "use strict";
 
-  var SCRIPT_VERSION = "1.5.2";
+  var SCRIPT_VERSION = "1.5.4";
   var Hurrry = {};
 
   // ============================
@@ -509,6 +509,162 @@
       }
       return null;
     }
+    // ---- Ad attribution: the UTMs and the hp_* ids of the ad that brought the
+    // shopper (campaign / ad set / ad / placement). Last touch: a landing that
+    // carries any of them replaces what was kept. It lives 7 days in a
+    // first-party cookie (the server-side guard of the WordPress plugin reads
+    // it) and in localStorage, and travels with the order next to fbc / fbp.
+    var ATTR_KEY = "hy_attr_v1";
+    var ATTR_COOKIE = "hy_attr";
+    var ATTR_DAYS = 7;
+    var ATTR_FIELDS = [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "hp_cid",
+      "hp_asid",
+      "hp_aid",
+      "hp_pl",
+    ];
+    var ATTR_OUT = {
+      utm_source: "utmSource",
+      utm_medium: "utmMedium",
+      utm_campaign: "utmCampaign",
+      utm_term: "utmTerm",
+      utm_content: "utmContent",
+      hp_cid: "hpCid",
+      hp_asid: "hpAsid",
+      hp_aid: "hpAid",
+      hp_pl: "hpPl",
+    };
+    var attr = null;
+    function clip(value, max) {
+      var v = value == null ? "" : String(value).replace(/[\u0000-\u001f\u007f]/g, " ").trim();
+      return v.length > max ? v.slice(0, max) : v;
+    }
+    function attrAlive(a) {
+      return !!(a && typeof a === "object" && a.at > 0 && Date.now() - a.at <= ATTR_DAYS * 864e5);
+    }
+    function loadAttr() {
+      var found = null;
+      var take = function (raw) {
+        if (!raw) return;
+        try {
+          var o = JSON.parse(raw);
+          if (o && typeof o === "object" && o.at > 0 && (!found || o.at > found.at)) found = o;
+        } catch (e) {
+        }
+      };
+      // localStorage first: it has the full copy, the cookie may be a slim one.
+      try {
+        take(localStorage.getItem(ATTR_KEY));
+      } catch (e) {
+      }
+      take(readCookie(ATTR_COOKIE));
+      if (found && !attrAlive(found)) {
+        found = null;
+        try {
+          localStorage.removeItem(ATTR_KEY);
+        } catch (e) {
+        }
+        if (readCookie(ATTR_COOKIE)) dropCookie(ATTR_COOKIE);
+      }
+      return found;
+    }
+    function saveAttr(a) {
+      var left = ATTR_DAYS - (Date.now() - a.at) / 864e5;
+      if (left <= 0) return;
+      var raw = JSON.stringify(a);
+      try {
+        localStorage.setItem(ATTR_KEY, raw);
+      } catch (e) {
+      }
+      // A cookie holds about 4 KB once encoded: landing page and referrer go
+      // first, and a touch that still does not fit stays in localStorage only.
+      var slim = raw;
+      if (encodeURIComponent(slim).length > 3000) {
+        var b = Object.assign({}, a);
+        delete b.lp;
+        delete b.rf;
+        slim = JSON.stringify(b);
+      }
+      if (encodeURIComponent(slim).length > 3000) {
+        if (readCookie(ATTR_COOKIE)) dropCookie(ATTR_COOKIE);
+        return;
+      }
+      if (readCookie(ATTR_COOKIE) !== slim) writeCookie(ATTR_COOKIE, slim, left);
+    }
+    function harvestAttr(url, hash) {
+      var stored = loadAttr();
+      var touch = {};
+      var tagged = false;
+      ATTR_FIELDS.forEach(function (k) {
+        var v = clip(url[k] || hash[k], k.indexOf("hp_") === 0 ? 64 : 150);
+        if (v) {
+          touch[k] = v;
+          tagged = true;
+        }
+      });
+      if (!tagged) {
+        // A click that carries a click id but no tags is still a touch: without
+        // this an untagged Google click would leave the sale on the Meta ad of
+        // three days ago. An fbclid alone also comes with organic links, so it
+        // only counts when nothing else is known.
+        var other =
+          url.gclid || url.gbraid || url.wbraid ? "google" : url.ttclid ? "tiktok" : url.epik ? "pinterest" : null;
+        if (other) {
+          touch.utm_source = other;
+          touch.auto = 1;
+          tagged = true;
+        } else if ((url.fbclid || hash.fbclid) && !stored) {
+          touch.utm_source = "facebook";
+          touch.auto = 1;
+          tagged = true;
+        }
+      }
+      if (!tagged) {
+        attr = stored;
+        return attr;
+      }
+      var same =
+        stored &&
+        ATTR_FIELDS.every(function (k) {
+          return (stored[k] || "") === (touch[k] || "");
+        });
+      // Same tags within half an hour is a reload or a second look at the
+      // same landing, not a new click: the first timestamp stays.
+      if (same && Date.now() - stored.at < 18e5) {
+        attr = stored;
+        return attr;
+      }
+      try {
+        touch.lp = clip(location.origin + location.pathname, 300);
+      } catch (e) {
+      }
+      try {
+        if (document.referrer) touch.rf = clip(String(document.referrer).split("#")[0].split("?")[0], 300);
+      } catch (e) {
+      }
+      touch.at = Date.now();
+      attr = touch;
+      saveAttr(touch);
+      return attr;
+    }
+    function attribution() {
+      current();
+      if (!attrAlive(attr)) return null;
+      var out = {};
+      ATTR_FIELDS.forEach(function (k) {
+        if (attr[k]) out[ATTR_OUT[k]] = attr[k];
+      });
+      if (attr.lp) out.landingUrl = attr.lp;
+      if (attr.rf) out.referrer = attr.rf;
+      if (attr.auto) out.inferred = true;
+      out.clickAt = attr.at;
+      return out;
+    }
     function harvest() {
       var stored = load();
       var url = paramsFrom(window.location.search);
@@ -638,6 +794,11 @@
         ["store", validVid(stored.vid)],
       ]);
       sources.vid = vid ? vid.source : "minted";
+      try {
+        harvestAttr(url, hash);
+      } catch (e) {
+        warn("attribution harvest failed", e);
+      }
       state = {
         fbc: fbc,
         fbp: fbp,
@@ -654,6 +815,7 @@
         vid: vid ? vid.value : mintVid(),
         em: stored.em || null,
         ph: stored.ph || null,
+        attr: attr,
         sources: sources,
       };
       persist();
@@ -740,11 +902,18 @@
       // Google Ads", whichever of the three ids the click carried.
       if (s.gclid || s.wbraid || s.gbraid) out.gclid = s.gclid || s.wbraid || s.gbraid;
       if (s.vid) out.visitorId = s.vid;
+      // Ad attribution (UTMs + hp_* ids). A backend that does not know the
+      // field ignores it, and a script that does not send it leaves the order
+      // unattributed: either side can be updated first.
+      var a = attribution();
+      if (a) out.attribution = a;
       return out;
     }
     function fingerprint() {
       var s = current();
-      return [s.fbc, s.fbp, s.ttc, s.ttp, s.gclid, s.gbraid, s.wbraid, s.epik, s.vid].join("|");
+      return [s.fbc, s.fbp, s.ttc, s.ttp, s.gclid, s.gbraid, s.wbraid, s.epik, s.vid, attrAlive(attr) ? attr.at : ""].join(
+        "|",
+      );
     }
     function decorate(url) {
       var s = current();
@@ -948,6 +1117,7 @@
       refresh: refresh,
       settle: settle,
       payload: payload,
+      attribution: attribution,
       fingerprint: fingerprint,
       decorate: decorate,
       watchPii: watchPii,
@@ -988,6 +1158,16 @@
   };
   Hurrry.signals = function () {
     return SIG.refresh();
+  };
+  Hurrry.attribution = function () {
+    SIG.refresh();
+    return SIG.attribution();
+  };
+  // What the script would add to the order right now (fbc, fbp, click ids,
+  // visitor id and ad attribution). Handy to check a store from the console.
+  Hurrry.orderSignals = function () {
+    SIG.refresh();
+    return SIG.payload();
   };
   Hurrry.status = function () {
     return {
