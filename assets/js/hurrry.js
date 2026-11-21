@@ -134,7 +134,9 @@
   };
 
   var PRE_KEY = "hurrry_pre";
-  var PRE_TTL_MS = 30 * 60 * 1000;
+  // The checkout URL carries a token that expires 5 minutes after it was issued.
+  var PRE_TTL_MS = 4 * 60 * 1000;
+  var preloadedAt = 0;
 
   var CFG = {};
   var initialised = false;
@@ -1257,7 +1259,7 @@
     // Dropping it here is what keeps a stale checkout out of the click path if
     // the refresh below fails or is still running when the shopper clicks.
     cartGeneration++;
-    if (preloadedUrl && preloadedKey) lastGood = { key: preloadedKey, url: preloadedUrl };
+    if (preloadedUrl && preloadedKey) lastGood = { key: preloadedKey, url: preloadedUrl, ts: preloadedAt };
     preloadedUrl = null;
     preloadedKey = null;
 
@@ -1310,7 +1312,7 @@
       }
 
       var key = cartExternalId(cart);
-      if (preloadedUrl && preloadedKey === key && generation === cartGeneration) {
+      if (preloadedUrl && preloadedKey === key && generation === cartGeneration && Date.now() - preloadedAt < PRE_TTL_MS) {
         log("Preloaded URL still matches the cart, skipping endpoint call");
         return;
       }
@@ -1320,7 +1322,7 @@
       var known = knownUrlFor(key);
       if (known) {
         if (generation === cartGeneration) {
-          publish(key, known);
+          publish(key, known.url, known.ts);
           log("Preloaded URL restored without an endpoint call");
         }
         return;
@@ -1345,12 +1347,13 @@
     }
   }
 
-  function publish(key, url) {
+  function publish(key, url, issuedAt) {
     preloadedUrl = url;
     preloadedKey = key;
+    preloadedAt = issuedAt || Date.now();
     preloadedFingerprint = SIG.fingerprint();
-    lastGood = { key: key, url: url };
-    storePreloaded(key, url);
+    lastGood = { key: key, url: url, ts: preloadedAt };
+    storePreloaded(key, url, preloadedAt);
   }
 
   /**
@@ -1359,13 +1362,15 @@
    * the click ever reaches PHP (cookie), both checked against the cart's
    * externalId before use.
    */
-  function storePreloaded(key, url) {
+  function storePreloaded(key, url, issuedAt) {
+    var left = PRE_TTL_MS - (Date.now() - issuedAt);
+    if (left <= 0) return;
     try {
-      sessionStorage.setItem(PRE_KEY, JSON.stringify({ key: key, url: url, ts: Date.now() }));
+      sessionStorage.setItem(PRE_KEY, JSON.stringify({ key: key, url: url, ts: issuedAt }));
     } catch (e) {}
     try {
       var secure = window.location.protocol === "https:" ? "; Secure" : "";
-      document.cookie = PRE_KEY + "=" + encodeURIComponent(key + "|" + url) + "; path=/; max-age=" + Math.floor(PRE_TTL_MS / 1000) + "; SameSite=Lax" + secure;
+      document.cookie = PRE_KEY + "=" + encodeURIComponent(key + "|" + url) + "; path=/; max-age=" + Math.floor(left / 1000) + "; SameSite=Lax" + secure;
     } catch (e) {}
   }
 
@@ -1379,12 +1384,12 @@
   }
 
   function knownUrlFor(key) {
-    if (lastGood && lastGood.key === key && lastGood.url) return lastGood.url;
+    if (lastGood && lastGood.key === key && lastGood.url && Date.now() - (lastGood.ts || 0) < PRE_TTL_MS) return { url: lastGood.url, ts: lastGood.ts };
     try {
       var raw = sessionStorage.getItem(PRE_KEY);
       if (raw) {
         var o = JSON.parse(raw);
-        if (o && o.key === key && o.url && Date.now() - (o.ts || 0) < PRE_TTL_MS) return o.url;
+        if (o && o.key === key && o.url && Date.now() - (o.ts || 0) < PRE_TTL_MS) return { url: o.url, ts: o.ts };
       }
     } catch (e) {}
     return null;
@@ -1396,7 +1401,7 @@
       if (!raw) return;
       var o = JSON.parse(raw);
       if (o && o.key && o.url && Date.now() - (o.ts || 0) < PRE_TTL_MS) {
-        lastGood = { key: o.key, url: o.url };
+        lastGood = { key: o.key, url: o.url, ts: o.ts || 0 };
       }
     } catch (e) {}
   }
@@ -1509,6 +1514,12 @@
       // faster and safer than building a second one for the same cart.
       if (!preloadedUrl && preloadInProgress && preloadPromise) {
         await withTimeout(preloadPromise, CFG.clickWaitMs);
+      }
+
+      if (preloadedUrl && Date.now() - preloadedAt >= PRE_TTL_MS) {
+        // Expired token: a new URL is created on demand below.
+        preloadedUrl = null;
+        preloadedKey = null;
       }
 
       if (preloadedUrl) {
