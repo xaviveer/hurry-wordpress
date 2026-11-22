@@ -135,7 +135,14 @@
 
   var PRE_KEY = "hurrry_pre";
   // The checkout URL carries a token that expires 5 minutes after it was issued.
-  var PRE_TTL_MS = 4 * 60 * 1000;
+  // It is used for two minutes only, and replaced before they are over
+  // so the shopper always has a ready URL (see scheduleRefresh).
+  var PRE_TTL_MS = 2 * 60 * 1000;
+  var PRE_REFRESH_MS = 90 * 1000;
+  var refreshTimer = null;
+  var refreshDue = false;
+  var refreshForced = false;
+  var shopperActive = true;
   var preloadedAt = 0;
 
   var CFG = {};
@@ -1142,6 +1149,7 @@
       return;
     }
     initialised = true;
+    wireRefresh();
 
     safe("SIG.boot", function () {
       SIG.boot();
@@ -1297,8 +1305,58 @@
     return preloadPromise;
   }
 
+  // Keeps a URL preloaded: a new one is created shortly before the current one
+  // expires. A hidden tab, or one the shopper has not touched since the last
+  // refresh, waits until they are back instead of creating orders unattended.
+  function scheduleRefresh() {
+    clearTimeout(refreshTimer);
+    refreshDue = false;
+    var wait = PRE_REFRESH_MS - (Date.now() - preloadedAt);
+    refreshTimer = setTimeout(refreshPreload, wait > 1000 ? wait : 1000);
+  }
+
+  function cancelRefresh() {
+    clearTimeout(refreshTimer);
+    refreshDue = false;
+  }
+
+  function refreshPreload() {
+    if (preloadInProgress || !preloadedUrl) return;
+    if (clickInFlight || document.hidden || !shopperActive) {
+      refreshDue = true;
+      return;
+    }
+    refreshDue = false;
+    shopperActive = false;
+    refreshForced = true;
+    log("Refreshing the preloaded URL before it expires");
+    preloadCheckoutUrl();
+  }
+
+  function noteActivity() {
+    shopperActive = true;
+    if (refreshDue && !document.hidden) refreshPreload();
+  }
+
+  function wireRefresh() {
+    ["pointerdown", "keydown", "touchstart", "mousemove", "scroll"].forEach(function (type) {
+      try {
+        window.addEventListener(type, noteActivity, { capture: true, passive: true });
+      } catch (e) {}
+    });
+    try {
+      document.addEventListener("visibilitychange", function () {
+        if (!document.hidden && refreshDue) noteActivity();
+      });
+    } catch (e) {}
+  }
+
   async function preloadOnce() {
     var generation = cartGeneration;
+    // A scheduled refresh must reach the endpoint even though the URL in hand
+    // still matches the cart.
+    var forced = refreshForced;
+    refreshForced = false;
 
     try {
       var cart = await getCartSafe();
@@ -1307,19 +1365,20 @@
           preloadedUrl = null;
           preloadedKey = null;
           forgetStored();
+          cancelRefresh();
         }
         return;
       }
 
       var key = cartExternalId(cart);
-      if (preloadedUrl && preloadedKey === key && generation === cartGeneration && Date.now() - preloadedAt < PRE_TTL_MS) {
+      if (!forced && preloadedUrl && preloadedKey === key && generation === cartGeneration && Date.now() - preloadedAt < PRE_TTL_MS) {
         log("Preloaded URL still matches the cart, skipping endpoint call");
         return;
       }
 
       // Same contents as a URL we already hold (this tab, or an earlier page
       // of this tab): nothing to create.
-      var known = knownUrlFor(key);
+      var known = forced ? null : knownUrlFor(key);
       if (known) {
         if (generation === cartGeneration) {
           publish(key, known.url, known.ts);
@@ -1354,6 +1413,7 @@
     preloadedFingerprint = SIG.fingerprint();
     lastGood = { key: key, url: url, ts: preloadedAt };
     storePreloaded(key, url, preloadedAt);
+    scheduleRefresh();
   }
 
   /**

@@ -35,8 +35,9 @@ class Hurrry_Gate {
 	const LOG_OPTION      = 'hurrry_gate_log';
 	const LOG_MAX         = 30;
 	const SESSION_KEY     = 'hurrry_handoff';
-	// The checkout URL carries a token that expires 5 minutes after it was issued.
-	const SESSION_TTL     = 240;
+	// The checkout URL carries a token that expires 5 minutes after it was issued;
+	// like the script, the guard only reuses one for its first two minutes.
+	const SESSION_TTL     = 120;
 	const PRE_COOKIE      = 'hurrry_pre';
 	const BYPASS_COOKIE   = 'hurrry_bypass';
 	const SERVER_ATTEMPTS = 2;

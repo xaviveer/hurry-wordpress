@@ -3,12 +3,13 @@
  * Plugin Name:       Hurrry Checkout
  * Plugin URI:        https://hurrry.com/
  * Description:       Replaces the WooCommerce checkout with the Hurrry hosted checkout. Builds the exact same payload as the Shopify hurry.js integration and guards the WooCommerce checkout page on the server so it is never shown.
- * Version:           1.5.4
+ * Version:           1.5.5
  * Requires at least: 5.8
  * Requires PHP:      7.4
  * Author:            Hurrry
  * License:           GPL-2.0-or-later
  * Text Domain:       hurrry-checkout
+ * Update URI:        https://cdn.hurrypayments.com/wordpress/update.json
  *
  * WC requires at least: 6.0
  * WC tested up to:      9.9
@@ -18,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'HURRRY_VERSION', '1.5.4' );
+define( 'HURRRY_VERSION', '1.5.5' );
 define( 'HURRRY_PLUGIN_FILE', __FILE__ );
 define( 'HURRRY_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'HURRRY_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -29,6 +30,11 @@ require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-payload.php';
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-cart-rest.php';
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-gate.php';
 require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-frontend.php';
+require_once HURRRY_PLUGIN_DIR . 'includes/class-hurrry-updater.php';
+
+// Outside the WooCommerce check on purpose: a store must still receive updates
+// while WooCommerce is switched off.
+Hurrry_Updater::instance();
 
 /**
  * Declare compatibility with WooCommerce High-Performance Order Storage.

@@ -4,7 +4,7 @@ Tags: woocommerce, checkout, conversion
 Requires at least: 5.8
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.5.4
+Stable tag: 1.5.5
 License: GPLv2 or later
 
 Replaces the WooCommerce checkout with the Hurrry hosted checkout, using the same payload as the Shopify integration, and guards the WooCommerce checkout on the server so it is never shown.
@@ -84,6 +84,10 @@ In the browser console: `Hurrry.status()`, `Hurrry.signals()`, `Hurrry.go()`, `H
 Mark any element with `data-hurrry-checkout` to have it treated as a checkout button, or `data-hurrry-ignore` to leave it alone.
 
 == Changelog ==
+
+= 1.5.5 =
+* Checkout links are now protected by a short-lived, single-use token. The script keeps the prepared checkout URL for two minutes and renews it in the background while the shopper is on the page, so the checkout button stays instant.
+* The plugin now updates itself: WordPress finds new versions on the Hurrry CDN, checks their signature and installs them. Automatic updates are switched on once; they can be turned off from the Plugins screen like for any other plugin.
 
 = 1.5.4 =
 * Ad attribution: the script now reads utm_source, utm_medium, utm_campaign, utm_term, utm_content and the ad ids hp_cid, hp_asid, hp_aid and hp_pl from the landing URL, keeps the last tagged click for 7 days (first-party cookie hy_attr + localStorage) and sends it with the order, so the Hurrry "Ads" panel can tell which campaign, ad set and ad sold. The server-side guard forwards the same data.
